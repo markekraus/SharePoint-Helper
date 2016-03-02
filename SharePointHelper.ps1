@@ -1,18 +1,135 @@
 function Validate-URL {
     [CmdletBinding(SupportsShouldProcess=$true,ConfirmImpact="Low")]
     param (
-        [Parameter(Mandatory=$true)]
+        [Parameter(Mandatory=$true,ValueFromPipeline=$True)]
         [String]$URL
     )
    Process {
-        $URI = $URL -as [system.uri]
-        if ($URI.IsAbsoluteUri -and $URI.Scheme -match 'http|https' ) {
-            $true
-        } else {
-            $false
+        $URL | ForEach-Object {
+            $CurURL = $_
+            $URI = $CurURL -as [system.uri]
+            if ($URI.IsAbsoluteUri -and $URI.Scheme -match 'http|https' ) {
+                $true
+            } else {
+                $false
+            }
         }
     }
 } 
+
+Function ConvertTo-HashTable {
+
+<#
+.Synopsis
+Convert an object into a hashtable.
+.Description
+This command will take an object and create a hashtable based on its properties.
+You can have the hashtable exclude some properties as well as properties that
+have no value.
+.Parameter Inputobject
+A PowerShell object to convert to a hashtable.
+.Parameter NoEmpty
+Do not include object properties that have no value.
+.Parameter Exclude
+An array of property names to exclude from the hashtable.
+.Example
+PS C:\> get-process -id $pid | select name,id,handles,workingset | ConvertTo-HashTable
+
+Name                           Value                                                      
+----                           -----                                                      
+WorkingSet                     418377728                                                  
+Name                           powershell_ise                                             
+Id                             3456                                                       
+Handles                        958                                                 
+.Example
+PS C:\> $hash = get-service spooler | ConvertTo-Hashtable -Exclude CanStop,CanPauseandContinue -NoEmpty
+PS C:\> $hash
+
+Name                           Value                                                      
+----                           -----                                                      
+ServiceType                    Win32OwnProcess, InteractiveProcess                        
+ServiceName                    spooler                                                    
+ServiceHandle                  SafeServiceHandle                                          
+DependentServices              {Fax}                                                      
+ServicesDependedOn             {RPCSS, http}                                              
+Name                           spooler                                                    
+Status                         Running                                                    
+MachineName                    .                                                          
+RequiredServices               {RPCSS, http}                                              
+DisplayName                    Print Spooler                                              
+
+This created a hashtable from the Spooler service object, skipping empty 
+properties and excluding CanStop and CanPauseAndContinue.
+.Notes
+Version:  2.0
+Updated:  January 17, 2013
+Author :  Jeffery Hicks (http://jdhitsolutions.com/blog)
+
+Read PowerShell:
+Learn Windows PowerShell 3 in a Month of Lunches
+Learn PowerShell Toolmaking in a Month of Lunches
+PowerShell in Depth: An Administrator's Guide
+
+ "Those who forget to script are doomed to repeat their work."
+
+.Link
+http://jdhitsolutions.com/blog/2013/01/convert-powershell-object-to-hashtable-revised
+.Link
+About_Hash_Tables
+Get-Member
+.Inputs
+Object
+.Outputs
+hashtable
+#>
+
+[cmdletbinding()]
+
+Param(
+[Parameter(Position=0,Mandatory=$True,
+HelpMessage="Please specify an object",ValueFromPipeline=$True)]
+[ValidateNotNullorEmpty()]
+[object]$InputObject,
+[switch]$NoEmpty,
+[string[]]$Exclude
+)
+
+Process {
+    #get type using the [Type] class because deserialized objects won't have
+    #a GetType() method which is what we would normally use.
+
+    $TypeName = [system.type]::GetTypeArray($InputObject).name
+    Write-Verbose "Converting an object of type $TypeName"
+    
+    #get property names using Get-Member
+    $names = $InputObject | Get-Member -MemberType properties | 
+    Select-Object -ExpandProperty name 
+
+    #define an empty hash table
+    $hash = @{}
+    
+    #go through the list of names and add each property and value to the hash table
+    $names | ForEach-Object {
+        #only add properties that haven't been excluded
+        if ($Exclude -notcontains $_) {
+            #only add if -NoEmpty is not called and property has a value
+            if ($NoEmpty -AND -Not ($inputobject.$_)) {
+                Write-Verbose "Skipping $_ as empty"
+            }
+            else {
+                Write-Verbose "Adding property $_"
+                $hash.Add($_,$inputobject.$_)
+        }
+        } #if exclude notcontains
+        else {
+            Write-Verbose "Excluding $_"
+        }
+    } #foreach
+        Write-Verbose "Writing the result to the pipeline"
+        Write-Output $hash
+ }#close process
+
+}#end function
 
 Function Add-SharePointLibraries {
 
@@ -28,7 +145,7 @@ Function Add-SharePointLibraries {
         if((Test-Path "$SharePointClientLocation\Microsoft.SharePoint.Client.dll") -and (Test-Path "$SharePointClientLocation\Microsoft.SharePoint.Client.Runtime.dll")){ break; }
     }
     try{    
-        Add-Type –Path "$SharePointClientLocation\Microsoft.SharePoint.Client.dll"
+        Add-Type –Path "$SharePointClientLocation\Microsoft.SharePoint.Client.dll" 
         Add-Type –Path "$SharePointClientLocation\Microsoft.SharePoint.Client.Runtime.dll"
     }
     catch {
@@ -48,12 +165,10 @@ function Get-SharePointLists {
         [System.Management.Automation.PSCredential]$Credential
     )
     begin{
-        if(!(Add-SharePointLibraries)){
-            Write-Error "Unable to load SharePoint Client Libraries"
-            return $false
-        }
+        Add-SharePointLibraries  | Out-Null
     }
     Process{
+        $SharePointSite | for
         if($PSCmdlet.ShouldProcess($SharePointSite)){
             try{
                 $context = New-Object Microsoft.SharePoint.Client.ClientContext($SharePointSite)
@@ -106,10 +221,7 @@ function Get-SharePointListItems {
         [String]$Identity
     )
     begin{
-        if(!(Add-SharePointLibraries)){
-            Write-Error "Unable to load SharePoint Client Libraries"
-            return $false
-        }
+        Add-SharePointLibraries | Out-Null
     }
     Process{
         if($PSCmdlet.ShouldProcess($Identity)){
@@ -179,81 +291,115 @@ function Get-SharePointListItems {
     }
 }
 
-function Add-SharepointListItem {
-    [CmdletBinding(SupportsShouldProcess=$true,ConfirmImpact="Medium")]
-	param(
-		[Parameter(Mandatory=$true,ValueFromPipeline=$True,ValueFromPipelineByPropertyName=$True)]
+function Add-SharePointListItem {
+    [CmdletBinding(SupportsShouldProcess=$true,ConfirmImpact="Low")]
+    param(
+        [Parameter(Mandatory=$true)]
         [ValidateScript({Validate-URL $_})]
         [string]$SharePointSite,
         [Parameter(Mandatory=$true)]
         [ValidateNotNull()]
         [System.Management.Automation.PSCredential]$Credential,
-        [Parameter(Mandatory=$true,ValueFromPipeline=$True,ValueFromPipelineByPropertyName=$True)]
-        [Alias("Id","Name","ListID","ListName","Title","ListTitle")]
-        [String]$Identity,
-        [hashtable]$Item
+        [Parameter(Mandatory=$true)]
+        [Alias("Identity","Id","Name","ListID","ListName","Title","ListTitle")]
+        [String]$ListIdentity,
+        [Parameter(Mandatory=$True,ValueFromPipeline=$True)]
+        [Alias("Items")]
+        $Item
+        
     )
     begin{
-        if(!(Add-SharePointLibraries)){
-            Write-Error "Unable to load SharePoint Client Libraries"
-            return $false
+        Write-Verbose "Begin."
+        Write-Verbose "Add Libraries."
+        Add-SharePointLibraries  | Out-Null
+        Write-verbose "Connecting to sharepoint site ""$SharePointSite""."
+        try{
+            $context = New-Object Microsoft.SharePoint.Client.ClientContext($SharePointSite)
+            $context.Credentials = New-Object Microsoft.SharePoint.Client.SharePointOnlineCredentials($Credential.UserName,$Credential.Password)
+            $site = $context.Site
+            $web = $context.Web
+            $context.Load($site)
+            $context.Load($web)
+            $context.ExecuteQuery()
+            
+        }
+        catch{
+            Write-Error "Error in connecting to sharepoint site $SharePointSite"
+            break
+        }
+        Write-verbose "Enumerating lists."
+        try{
+            $lists=$web.Lists
+            $context.Load($lists)
+            $context.ExecuteQuery()
+        }
+        catch{
+            Write-Error "Error enumerting lists from $SharePointSite"
+            break
+        }
+        Write-verbose "Normalizing List identity."
+        try{
+            [system.guid]::Parse($ListIdentity)| Out-Null
+            $List=$lists.GetById($ListIdentity)
+        }
+        catch{
+            $List=$lists.GetByTitle($ListIdentity)
+        }
+        Write-verbose "Loading list context for list ""$ListIdentity""."
+        try{
+            $context.Load($List)
+            $context.ExecuteQuery()
+        }
+        catch{
+            Write-Error "Unable to find List $ListIdentity."
+            break
         }
     }
     Process{
-        if($PSCmdlet.ShouldProcess($Item)){
-            try{
-                $context = New-Object Microsoft.SharePoint.Client.ClientContext($SharePointSite)
-                $context.Credentials = New-Object Microsoft.SharePoint.Client.SharePointOnlineCredentials($Credential.UserName,$Credential.Password)
-                $site = $context.Site
-                $web = $context.Web
-                $context.Load($site)
-                $context.Load($web)
-                $context.ExecuteQuery()
-                
+        Write-Verbose "Process"
+        $Item | foreach-object {
+            $CurItem = $_
+            $CurItemType = [system.type]::GetTypeArray($CurItem)
+            if($CurItemType.BaseType -like "System.Object" -and $CurItemType.Name -notlike "Hashtable"){
+                Write-Verbose "Item is an object."
+                $ItemHash = $CurItem | ConvertTo-HashTable
             }
-            catch{
-                Write-Error "Error in connecting to sharepoint site $SharePointSite"
+            elseif($CurItemType.BaseType -like "System.Object" -and $CurItemType.Name -like "Hashtable"){
+                Write-Verbose "Item is a hasthable."
+                $ItemHash = $CurItem
+            }
+            else{
+                Write-Error "$($CurItemType.Name) Is not a valid item type."
                 return
             }
-            try{
-                $lists=$web.Lists
-                $context.Load($lists)
-                $context.ExecuteQuery()
-            }
-            catch{
-                Write-Error "Error enumerting lists from $SharePointSite"
-                return
-            }
-            try{
-                [system.guid]::Parse($Identity)| Out-Null
-                $List=$lists.GetById($Identity)
-            }
-            catch{
-                $List=$lists.GetByTitle($Identity)
-            }
-            try{
-                $context.Load($List)
-                $context.ExecuteQuery()
-            }
-            catch{
-                Write-Error "Unable to find List $Identity."
-                return
-            }
-            $ListItemInfo = New-Object Microsoft.SharePoint.Client.ListItemCreationInformation
-            $NewItem = $List.AddItem($ListItemInfo)
-            foreach($Key in $Item.Keys){
-                $NewItem[$Key] = $Item.$key
-            }
-            try{
-                $NewItem.Update()
-                $Context.ExecuteQuery()
-            }
-            catch{
-                Write-Error "Unable to add item`r`n$($NewItem | out-string -stream)"
+            if($PSCmdlet.ShouldProcess("Add new item to list ""$ListIdentity"" on site ""$SharePointSite""",
+                    "Add new item to list ""$ListIdentity"" on site ""$SharePointSite""?",
+                    "Adding new item to list ""$ListIdentity"" on site ""$SharePointSite"".")){
+                Write-Verbose "Creating New Item Hash"
+                $ListItemInfo = New-Object Microsoft.SharePoint.Client.ListItemCreationInformation
+                $NewItem = $List.AddItem($ListItemInfo)
+                $ItemHash.GetEnumerator() | ForEach-Object {
+                    $NewItem[$_.Key] = $_.Value
+                }
+                Write-Verbose "Adding Item to list."
+                try{
+                    $NewItem.Update()
+                    $Context.ExecuteQuery()
+                    Write-verbose ($ItemHash | format-table | Out-String)
+                }
+                catch{
+                    $ErrorMessage = $_.Exception.Message
+                    $FailedItem = $_.Exception.ItemName
+                    Write-Error "Unable to add item. $FailedItem :  $ErrorMessage"
+                }
             }
         }
     }
+    end{
+        Write-Verbose "End"
+    } 
 }
+
 
 function Get-SharePointListColumns {
     [CmdletBinding(SupportsShouldProcess=$true,ConfirmImpact="Medium")]
@@ -269,10 +415,7 @@ function Get-SharePointListColumns {
         
     )
     begin{
-        if(!(Add-SharePointLibraries)){
-            Write-Error "Unable to load SharePoint Client Libraries"
-            return $false
-        }
+        Add-SharePointLibraries  | Out-Null
     }
     Process{
         foreach($CurIdentity in $Identity) {
@@ -338,3 +481,25 @@ function Get-SharePointListColumns {
         }
     }
 }
+
+<#
+$SPCRED = Get-Credential
+$SharePointSite = "https://mitel365.sharepoint.com/teams/IT"
+$Identity = "6106130b-f217-4589-9b4a-e8b633716232"
+$Identity = "BitLocker Keys"
+$NewItem = @{
+    Recovery_x0020_Identifier="test"
+    Recovery_x0020_Identifier_x0020_="test"
+    Recovery_x0020_Password="test"
+    Title="test"
+    Domain="test.com"
+}
+
+
+
+Get-SharePointLists -SharePointSite $SharePointSite -Credential $SPCRED  | ft title,id,identity
+Get-SharePointLists -SharePointSite $SharePointSite -Credential $SPCRED  | Where-Object {$_.Title -like "*bitlocker*"} | ft title,id,identity
+Add-SharepointListItem -SharePointSite $SharePointSite -Credential $SPCRED -Identity $Identity -Item $NewItem
+Get-SharePointListItems -SharePointSite $SharePointSite -Credential $SPCRED -Identity $Identity 
+Get-SharePointLists -SharePointSite $SharePointSite -Credential $SPCRED | Where-Object {$_.Title -like $Identity} | Get-SharePointListItems -Credential $SPCRED | Select-Object -First 5 | ft title,id,identity,listtitle
+#>
