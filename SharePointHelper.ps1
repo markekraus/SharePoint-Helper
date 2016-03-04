@@ -325,7 +325,8 @@ function Add-SharePointListItem {
         }
         catch{
             Write-Error "Error in connecting to sharepoint site $SharePointSite"
-            break
+            $abort=$true
+            return
         }
         Write-verbose "Enumerating lists."
         try{
@@ -335,7 +336,8 @@ function Add-SharePointListItem {
         }
         catch{
             Write-Error "Error enumerting lists from $SharePointSite"
-            break
+            $abort=$true
+            return
         }
         Write-verbose "Normalizing List identity."
         try{
@@ -352,11 +354,13 @@ function Add-SharePointListItem {
         }
         catch{
             Write-Error "Unable to find List $ListIdentity."
-            break
+            $abort=$true
+            retrun
         }
     }
     Process{
         Write-Verbose "Process"
+        if($abort){return}
         $Item | foreach-object {
             $CurItem = $_
             $CurItemType = [system.type]::GetTypeArray($CurItem)
@@ -397,6 +401,7 @@ function Add-SharePointListItem {
     }
     end{
         Write-Verbose "End"
+        if($abort){return}
     } 
 }
 
