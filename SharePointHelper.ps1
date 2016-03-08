@@ -210,22 +210,50 @@ function Get-SharePointLists {
 function Get-SharePointListItems {
     [CmdletBinding(SupportsShouldProcess=$true,ConfirmImpact="Medium")]
 	param(
-		[Parameter(Mandatory=$true,ValueFromPipelineByPropertyName=$True)]
+		[Parameter(Mandatory=$true,ParameterSetName='Filter')]
+        [Parameter(Mandatory=$true,ParameterSetName='NoFilter')]
         [ValidateScript({Validate-URL $_})]
         [string]$SharePointSite,
-        [Parameter(Mandatory=$true)]
+        [Parameter(Mandatory=$true,ParameterSetName='Filter')]
+        [Parameter(Mandatory=$true,ParameterSetName='NoFilter')]
         [ValidateNotNull()]
         [System.Management.Automation.PSCredential]$Credential,
-        [Parameter(Mandatory=$true,ValueFromPipeline=$True,ValueFromPipelineByPropertyName=$True)]
-        [Alias("Id","Name","ListID","ListName","Title","ListTitle")]
-        [String]$Identity
+        [Parameter(Mandatory=$true,ParameterSetName='Filter')]
+        [Parameter(Mandatory=$true,ParameterSetName='NoFilter')]
+        [Alias("Id","Identity","Name","ListID","ListName","Title","ListTitle")]
+        [String]$ListIdentity,
+        [Parameter(ParameterSetName='Filter',Mandatory=$true)]
+        [string[]]$FilterColumns,
+        [Parameter(ParameterSetName='Filter',Mandatory=$true)]
+        [AllowEmptyString()]
+        [string[]]$FilterValues,
+        [ValidateSet("Contains","BeginsWith","Eq","Neq","Gt","Lt","Geq","Leq","Neq","IsNotNull","IsNull")]
+        [Parameter(ParameterSetName='Filter',Mandatory=$true)]
+        [string[]]$FilterOperators,
+        [Parameter(ParameterSetName='Filter')]
+        [ValidateSet("And","Or")]
+        [Alias("Bool","FilterBool")]
+        [string]$FilterBoolean = "Or"
     )
     begin{
+        $abort = $false
+        $ParamSetName = $PsCmdLet.ParameterSetName
+        Write-Verbose "ParameterSet: $ParamSetName"
+        Write-Verbose "Adding Libraries."
         Add-SharePointLibraries | Out-Null
+        Write-Verbose "Verifying Filters."
+        if($ParamSetName -eq 'Filter' -and ($FilterColumns.Count -ne $FilterValues.Count -or $FilterColumns.Count -ne $FilterOperators.Count)){
+            Write-Verbose "$("FilterColumns: {0}, FilterValues: {1}, FilterOperators: {2}" -f $FilterColumns.Count, $FilterValues.Count, $FilterOperators.Count)"
+            $abort = $true
+            Write-Error "Number of FilterColumns, FilterValues, and FilterOperators must match."
+            return
+        }
     }
     Process{
-        if($PSCmdlet.ShouldProcess($Identity)){
+        if($Abort){Return}
+        if($PSCmdlet.ShouldProcess($ListIdentity)){
             try{
+                Write-Verbose "Initilizing SharePoint Site Context."
                 $context = New-Object Microsoft.SharePoint.Client.ClientContext($SharePointSite)
                 $context.Credentials = New-Object Microsoft.SharePoint.Client.SharePointOnlineCredentials($Credential.UserName,$Credential.Password)
                 $site = $context.Site
@@ -240,6 +268,7 @@ function Get-SharePointListItems {
                 return
             }
             try{
+                Write-Verbose "Initilizing SharePoint Lists Context."
                 $lists=$web.Lists
                 $context.Load($lists)
                 $context.ExecuteQuery()
@@ -248,29 +277,51 @@ function Get-SharePointListItems {
                 Write-Error "Error enumerting lists from $SharePointSite"
                 return
             }
+            Write-Verbose "Parsing List Identity."
             try{
-                [system.guid]::Parse($Identity)| Out-Null
-                $List=$lists.GetById($Identity)
+                [system.guid]::Parse($ListIdentity)| Out-Null
+                $List=$lists.GetById($ListIdentity)
             }
             catch{
-                $List=$lists.GetByTitle($Identity)
+                $List=$lists.GetByTitle($ListIdentity)
             }
             try{
+                Write-Verbose "Initilizing SharePoint List Context for $ListIdentity."
                 $context.Load($List)
                 $context.ExecuteQuery()
             }
             catch{
-                Write-Error "Unable to find List $($Identity)."
+                Write-Error "Unable to find List $($ListIdentity)."
                 return
             }
             try{
                 $query = [Microsoft.SharePoint.Client.CamlQuery]::CreateAllItemsQuery(100000)
+                if($ParamSetName -eq 'Filter'){
+                    $query = New-Object Microsoft.SharePoint.Client.CamlQuery
+                    $CamlQuery = "<View><Query><Where>"
+                    if($FilterColumns.Count -gt 1){
+                        $CamlQuery += "<$FilterBoolean>"
+                    }
+                    for($i = 0; $i -lt $FilterColumns.Count; $i++){
+                        $CamlQuery += "<{0}><FieldRef Name='{1}' />" -f $FilterOperators[$i],$FilterColumns[$i]
+                        if($FilterOperators[$i] -notin "IsNotNull","IsNull"){
+                            $CamlQuery += "<Value Type='Text'>{0}</Value>" -f $FilterValues[$i]
+                        }
+                        $CamlQuery += "</{0}>" -f $FilterOperators[$i]
+                    }
+                    if($FilterColumns.Count -gt 1){
+                        $CamlQuery += "</$FilterBoolean>"
+                    }
+                    $CamlQuery += "</Where></Query></View>"
+                    Write-Verbose "CAML Query: $CamlQuery"
+                    $query.ViewXml = $CamlQuery
+                }
                 $Items = $List.GetItems($query)
                 $context.Load($Items)
                 $context.ExecuteQuery()
             }
             catch{
-                Write-Error "Error Enumerating items from list List $Identity"
+                Write-Error "Error Enumerating items from list List $ListIdentity"
                 return
             }
                  
