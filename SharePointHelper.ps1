@@ -286,17 +286,19 @@ function Get-SharePointListItems {
                 $List=$lists.GetByTitle($ListIdentity)
             }
             try{
-                Write-Verbose "Initilizing SharePoint List Context for $ListIdentity."
+                Write-Verbose "Initilizing SharePoint List Context for ""$ListIdentity""."
                 $context.Load($List)
                 $context.ExecuteQuery()
             }
             catch{
-                Write-Error "Unable to find List $($ListIdentity)."
+                Write-Error "Unable to find List ""$($ListIdentity)""."
                 return
             }
             try{
+                Write-Verbose "Building query."
                 $query = [Microsoft.SharePoint.Client.CamlQuery]::CreateAllItemsQuery(100000)
                 if($ParamSetName -eq 'Filter'){
+                    Write-Verbose "Assmebling CAML."
                     $query = New-Object Microsoft.SharePoint.Client.CamlQuery
                     $CamlQuery = "<View><Query><Where>"
                     if($FilterColumns.Count -gt 1){
@@ -316,6 +318,7 @@ function Get-SharePointListItems {
                     Write-Verbose "CAML Query: $CamlQuery"
                     $query.ViewXml = $CamlQuery
                 }
+                Write-Verbose "Running Query."
                 $Items = $List.GetItems($query)
                 $context.Load($Items)
                 $context.ExecuteQuery()
@@ -324,7 +327,7 @@ function Get-SharePointListItems {
                 Write-Error "Error Enumerating items from list List $ListIdentity"
                 return
             }
-                 
+            Write-Verbose "$("Returning {0} Items." -f $Items.Count)"
             for($i = 0; $i -lt $Items.Count; $i++){
                 $OutObj = New-Object psobject
                 $OutObj | Add-Member -MemberType NoteProperty -Name SharePointSite -Value $SharePointSite
